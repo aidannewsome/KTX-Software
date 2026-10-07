@@ -92,7 +92,7 @@ jobs:
         # Same tag cmake/version.cmake uses for KTX_VERSION_FULL.
         run: |
           KTX_VERSION=`git describe --abbrev=0 --match 'v[0-9]*'`
-          echo "LIBKTX_VERSION=${KTX_VERSION#v}" >> $GITHUB_ENV
+          echo "LIBKTX_VERSION=${KTX_VERSION#v}+1265.freethreaded" >> $GITHUB_ENV  # Maquette's build: KhronosGroup/KTX-Software#1265 and free-threading, until released
 
       - name: Build and test wheels
         uses: pypa/cibuildwheel@v4.3.0
