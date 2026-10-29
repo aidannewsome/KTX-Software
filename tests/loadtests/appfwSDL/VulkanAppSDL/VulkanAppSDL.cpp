@@ -74,17 +74,46 @@ VulkanAppSDL::~VulkanAppSDL()
 
 }
 
-
 bool
 VulkanAppSDL::initialize(Args& args)
 {
-    static const std::unordered_map<std::string, VkColorSpaceKHR> csValues {
-        {"adobergb", VK_COLOR_SPACE_ADOBERGB_LINEAR_EXT}, // Not supported on Apple devices.
-        {"bt2020", VK_COLOR_SPACE_BT2020_LINEAR_EXT},
-        {"bt709", VK_COLOR_SPACE_BT709_LINEAR_EXT}, // Not supported on Apple devces.
-        {"display-p3", VK_COLOR_SPACE_DISPLAY_P3_LINEAR_EXT},
-        {"extended-srgb", VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT},
+    // Currently this app supports only linear HDR and non-linear (sRGB) LDR
+    // color spaces. All others are commented out. As the app does not do
+    // primaries or transfer-function conversion and input data is all in
+    // BT709 primaries, in truth only sRGB and extended sRGB formats will
+    // give correct results. The other uncommented spaces will give
+    // approximately correct results. This infrastructure has been put in
+    // place to enable work with color spaces.
+    static const std::unordered_map<std::string, VulkanSwapchain::csInfo> csValues {
+        // LDR
+        {"adobergb", {vk::ColorSpaceKHR::eAdobergbLinearEXT, false, true}}, // Not on Apple
+//        {"bt2020", {vk::ColorSpaceKHR::eBt2020LinearEXT, false, true}},
+//        {"bt709", {vk::ColorSpaceKHR::eBt709LinearEXT, false, true}},
+        {"adobergb-nl", {vk::ColorSpaceKHR::eAdobergbNonlinearEXT, false, true}},
+        {"bt709-nl", {vk::ColorSpaceKHR::eBt709NonlinearEXT, false, false}},
+        {"dci-p3-nl", {vk::ColorSpaceKHR::eDciP3NonlinearEXT, false, false}},
+        {"display-p3-nl", {vk::ColorSpaceKHR::eDisplayP3NonlinearEXT, false, false}},
+        {"srgb-nl", {vk::ColorSpaceKHR::eSrgbNonlinear, false, false}},
+        // HDR
+        // MoltenVK and KosmicKrisp (Apple) apparently map this to kCGColorSpaceLinearDisplayP3
+        // which does not clamp values of 16F components so is effectively the same as
+        // kCGColorSpaceExtendedLinearDisplayP3, which has no vk::ColorSpaceKHR equivalent,
+        // so is HDR.
+        {"display-p3", {vk::ColorSpaceKHR::eDisplayP3LinearEXT, true, true}},
+        {"extended-srgb", {vk::ColorSpaceKHR::eExtendedSrgbLinearEXT, true, true}},
+        //{"dolby", {vk::ColorSpaceKHR::eDolbyvisionEXT, true, false}}, // deprecated
+//        {"extended-srgb-nl", {vk::ColorSpaceKHR::eExtendedSrgbNonlinearEXT, true, false}},
+//        {"r2100-pq-nl", {vk::ColorSpaceKHR::eHdr10St2084EXT, true, false}},
+//        {"r2100-hlg-nl", {vk::ColorSpaceKHR::eHdr10HlgEXT, true, false}},
     };
+
+#if SDL_PLATFORM_APPLE
+    static const std::unordered_map<std::string, vk::DriverId> selectableDrivers {
+        { "kk", vk::DriverId::eMesaKosmickrisp },
+        { "mvk", vk::DriverId::eMoltenvk }
+    };
+#endif
+
     std::string colorSpaceStr;
 #if !SDL_PLATFORM_APPLE || SDL_PLATFORM_MACOS
     // Apple locked systems have no way to pass environment variables to bundled apps.
@@ -96,6 +125,7 @@ VulkanAppSDL::initialize(Args& args)
                                                  "KTX_VK_LT_SURFACE_COLOR_SPACE");
     if (css != nullptr) colorSpaceStr = css;
 #else
+    // iOS, etc. No way to provide CLI options or environment variables so ...
     hdr = true;
 #endif
 
@@ -113,7 +143,7 @@ VulkanAppSDL::initialize(Args& args)
             continue;
         }
 #if SDL_PLATFORM_APPLE && !SDL_PLATFORM_MACOS
-        // So hdr can be disabled when debugging, if necessary.
+        // So hdr can be disabled when debugging ios, etc., if necessary.
         if (args[i].compare("++hdr") == 0) {
             hdr = false;
             args.erase(args.begin() + i--);
@@ -130,16 +160,67 @@ VulkanAppSDL::initialize(Args& args)
             colorSpaceStr = args[i+1];
             args.erase(args.begin() + i, args.begin() + i + 2);
             i--;
+            continue;
         }
+#if SDL_PLATFORM_APPLE
+        if (args[i].compare("--driver") == 0) {
+            if (args.size() < i + 2) {
+                (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, szName,
+                                               "Missing driver name for --driver", NULL);
+                return false;
+            }
+            const auto it = selectableDrivers.find(args[i+1]);
+            if (it != selectableDrivers.end()) {
+                requestedDriver = it->second;
+            } else {
+                std::stringstream msg;
+                msg << "Unrecognized driver name, " << args[i+1]
+                    << " specified for --driver";
+                (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, szName,
+                                               msg.str().c_str(), NULL);
+                return false;
+            }
+            args.erase(args.begin() + i, args.begin() + i + 2);
+            i--;
+            continue;
+        }
+#endif
     }
+    bool colorSpaceSet = false;
+    std::string specMethods = ", specified via --cs or KTX_VK_LT_SURFACE_COLOR_SPACE";
     if (colorSpaceStr.size() > 0) {
         const auto it = csValues.find(colorSpaceStr);
         if (it != csValues.end()) {
              colorSpace = it->second;
+             colorSpaceSet = true;
         } else {
             std::stringstream msg;
-            msg << "Invalid color space, " << colorSpaceStr
-                << ", given for --cs or KTX_VK_LT_SURFACE_COLOR_SPACE";
+            msg << "Unknown color space, " << colorSpaceStr
+                << specMethods;
+            (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, szName,
+                                           msg.str().c_str(), NULL);
+            return false;
+        }
+    }
+
+    if (!colorSpaceSet && hdr) {
+        colorSpace = defaultHdrColorSpace;
+    }
+    if (colorSpaceSet) {
+        // TODO: redo these checks if non-linear HDR and linear LDR support is added to app.
+        if (hdr && !colorSpace.isHDR) {
+            std::stringstream msg;
+            msg << "HDR is set but color space, " << colorSpaceStr
+                << specMethods
+                << " is not an HDR color space.";
+            (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, szName,
+                                           msg.str().c_str(), NULL);
+            return false;
+        } else if (!hdr && colorSpace.isHDR) {
+            std::stringstream msg;
+            msg << "HDR is not set but color space, " << colorSpaceStr
+                << specMethods
+                << " is an HDR color space.";
             (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, szName,
                                            msg.str().c_str(), NULL);
             return false;
@@ -172,6 +253,13 @@ VulkanAppSDL::initialize(Args& args)
     // Set the application's own icon in place of the Windows default set by SDL.
     // Needs to be done here to avoid change being visible.
     setWindowsIcon(pswMainWindow);
+#endif
+#if SDL_PLATFORM_MACOS
+    // Prevent duplicate layer and library warnings which occur if the user has
+    // created a global SDK installation, i.e. run `install_vulkan.py` in the SDK.
+    // Must be set before vk::createInstance is called.
+    // "unsafe" refers to thread safety which is not an issue at this point in the app.
+    SDL_setenv_unsafe("VK_LOADER_SEARCH_ONLY_IN_BUNDLE", "1", 1 /*overwrite*/);
 #endif
 
     if (!initializeVulkan()) {
@@ -223,20 +311,56 @@ VulkanAppSDL::doEvent(SDL_Event* event)
     return AppBaseSDL::doEvent(event);
 }
 
-
 void
 VulkanAppSDL::drawFrame(uint32_t /*msTicks*/)
 {
     if (!prepared)
         return;
 
-    prepareFrame();
+    VkResult res = acquireNextImage();
 
+    if (res != VK_SUCCESS) {
+        if (!acquireNextImageErrorWarned) {
+            std::stringstream msg;
+            msg << "Failed to acquire swapchain image: VK_RESULT = " << res;
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, szName,
+                                     msg.str().c_str(), NULL);
+            acquireNextImageErrorWarned = true;
+        }
+        return;
+    }
+
+    // Submit post present image barrier to transform the image back to a
+    // color attachment that our render pass can write to
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.pNext = NULL;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &vkctx.postPresentCmdBuffers[currentImage];
+    VkPipelineStageFlags waitFlags = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    // Must wait for presentComplete before transforming the image.
+    submitInfo.waitSemaphoreCount   = 1;
+    submitInfo.pWaitSemaphores      = &vkctx.perFb[currentImage].semaphores.presentComplete;
+    submitInfo.pWaitDstStageMask    = &waitFlags;
+    VK_CHECK_RESULT(vkQueueSubmit(vkctx.queue, 1,
+                                  &submitInfo, VK_NULL_HANDLE));
+
+	// Submit draw command to the queue with a renderComplete semaphore.
+	if (vkctx.perFb[currentImage].semaphores.renderComplete == VK_NULL_HANDLE) {
+		VkSemaphoreCreateInfo semaphore_info {
+		    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .pNext = NULL,
+            .flags = 0
+        };
+		VK_CHECK_RESULT(vkCreateSemaphore(vkctx.device, &semaphore_info, nullptr,
+                        &vkctx.perFb[currentImage].semaphores.renderComplete));
+	}
+    vkctx.drawCmdSubmitInfo.signalSemaphoreCount = 1;
+    vkctx.drawCmdSubmitInfo.pSignalSemaphores
+                 = &vkctx.perFb[currentImage].semaphores.renderComplete;
     vkctx.drawCmdSubmitInfo.commandBufferCount = 1;
-    vkctx.drawCmdSubmitInfo.pCommandBuffers =
-                    &vkctx.drawCmdBuffers[currentBuffer];
+    vkctx.drawCmdSubmitInfo.pCommandBuffers = &vkctx.drawCmdBuffers[currentImage];
 
-    // Submit to queue
     VK_CHECK_RESULT(vkQueueSubmit(vkctx.queue, 1,
                                   &vkctx.drawCmdSubmitInfo, VK_NULL_HANDLE));
 
@@ -250,25 +374,52 @@ VulkanAppSDL::windowResized()
     // Derived class can override as necessary.
 }
 
+#define GUARD_UNSET_SURFACE_SIZE 1
+#define LOG_RESIZE 0
 void
 VulkanAppSDL::resizeWindow(int width, int height)
 {
-    // XXX Necessary? Get out-of-date errors from vkAcquireNextImage regardless
-    // of whether this guard is used. This guard doesn't seem to make them any
-    // less likely.
-#define GUARD 0
-#if GUARD
-    if (!prepared)
-    {
-        return;
-    }
-    prepared = false;
+    VkSurfaceCapabilitiesKHR surface_properties;
+	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vkctx.gpu, vkctx.swapchain.getSurface(),
+                                              &surface_properties);
+#if LOG_RESIZE
+    std::cerr << "width = " << width << ", height = " << height
+              << ", surface properties width = " << surface_properties.currentExtent.width
+              << ", surface properties height = " << surface_properties.currentExtent.height
+              << std::endl;
 #endif
+    uint32_t nw, nh;
+    // Set width & height from surface properties not passed
+    // arguments so this can be called from places other than
+    // the resize event handler.
+    nw = surface_properties.currentExtent.width;
+    nh = surface_properties.currentExtent.height;
+#if GUARD_UNSET_SURFACE_SIZE
+    // Observed on Ubuntu 24.04 with SDL_VIDEODRIVER=wayland, or if built
+    // without the SDL x11 feature, using Intel open-source Mesa driver,
+    // seemingly on every resize event. The first resize event has the size
+    // of a maximized window. The window is also drawn without decorations,
+    // a problem also suffered by gl3loadtests.
+    if (nw == UINT32_MAX) nw = width;
+    if (nh == UINT32_MAX) nh = height;
+#else
+    // Keep compilers happy
+    (void)width;
+    (void)height;
+#endif
+	// Only re-create the swapchain if the dimensions have changed.
+	if (nw == w_width && nh == w_height) {
+		return;
+	}
 
-    // Recreate swap chain.
-
-    w_width = width;
-    w_height = height;
+    w_width = nw;
+    w_height = nh;
+#if LOG_RESIZE
+    std::cerr << "Recreating swapchain: w_width = " << w_width
+              << ", w_height = " << w_height << std::endl;
+#endif
+    // In-flight rendering must be complete before any images can be deleted.
+    VK_CHECK_RESULT(vkQueueWaitIdle(vkctx.queue));
 
     // This destroys any existing swapchain and makes a new one.
     createSwapchain();
@@ -278,32 +429,46 @@ VulkanAppSDL::resizeWindow(int width, int height)
     vkFreeMemory(vkctx.device, vkctx.depthBuffer.mem, nullptr);
 
     // Recreate the frame buffers
-    for (uint32_t i = 0; i < vkctx.framebuffers.size(); i++)
-    {
+    for (uint32_t i = 0; i < vkctx.framebuffers.size(); i++) {
         vkDestroyFramebuffer(vkctx.device, vkctx.framebuffers[i], nullptr);
     }
 
     // XXX Is this necessary? Is Willems doing this?
-    vkDestroyRenderPass(vkctx.device, vkctx.renderPass, NULL);
+    //vkDestroyRenderPass(vkctx.device, vkctx.renderPass, NULL);
 
     vkctx.destroyPresentCommandBuffers();
     (void)(prepareDepthBuffer() // XXX Call it DepthStencil?
         && vkctx.createPresentCommandBuffers()
         && preparePresentCommandBuffers()
-        && prepareRenderPass()
+        //&& prepareRenderPass()
         && prepareFramebuffers());
 
     flushInitialCommands();
-    if (enableTextOverlay)
-    {
-        textOverlay->reallocateCommandBuffers();
+    if (enableTextOverlay) {
+        VkRect2D safeRenderArea; // Avoids any status area such as on iPad.
+        safeRenderArea.offset.x = safeRenderArea.offset.y = 0;
+        safeRenderArea.extent.width = w_width;
+        safeRenderArea.extent.height = w_height;
+        SDL_Rect safeWindowArea;
+        float displayScale = SDL_GetWindowDisplayScale(pswMainWindow);
+        if (displayScale == 0.0f) displayScale = 1.0f;
+        if (SDL_GetWindowSafeArea(pswMainWindow, &safeWindowArea)) {
+            safeRenderArea.extent.width = (safeWindowArea.w - 1) * displayScale;
+            safeRenderArea.extent.height = safeWindowArea.h * displayScale;
+            safeRenderArea.offset.x = safeWindowArea.x * displayScale;
+            safeRenderArea.offset.y = safeWindowArea.y * displayScale;
+        }
+        textOverlay->resize(safeRenderArea);
         updateTextOverlay();
+        std::cerr << "resize: w_width = " << w_width << ", w_height = " << w_height
+                  << ", event.width = " << width << ", event.height = " << height
+                  << ", sRA.w = " << safeRenderArea.extent.width
+                  << ", sRA.h = " << safeRenderArea.extent.height
+                  << ", sRA.x = " << safeRenderArea.offset.x
+                  << ", sRA.y = " << safeRenderArea.offset.y << std::endl;
     }
     // Notify derived class.
     windowResized();
-#if GUARD
-    prepared = true;
-#endif
 }
 
 
@@ -322,37 +487,67 @@ VulkanAppSDL::onFPSUpdate()
 //  Frame draw utilities
 //----------------------------------------------------------------------
 
+#if !defined(RECREATE_SWAPCHAIN_ON_SUBOPTIMAL)
+  #define RECREATE_SWAPCHAIN_ON_SUBOPTIMAL 0
+#endif
 
-void
-VulkanAppSDL::prepareFrame()
+VkResult
+VulkanAppSDL::acquireNextImage()
 {
+    VkResult res;
+    VkSemaphore presentCompleteSemaphore;
+    // Since we don't know which image will be acquired we cannot pass a
+    // semaphore associated with a particular image. Make a new one which
+    // we will associate with the image later.
+	if (vkctx.recycledSemaphores.empty()) {
+		VkSemaphoreCreateInfo semaphore_info {
+		    .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .pNext = NULL,
+            .flags = 0
+        };
+        VK_CHECK_RESULT(vkCreateSemaphore(vkctx.device, &semaphore_info,
+                                          nullptr,
+                                          &presentCompleteSemaphore));
+	} else {
+		presentCompleteSemaphore = vkctx.recycledSemaphores.back();
+		vkctx.recycledSemaphores.pop_back();
+	}
     // Acquire the next image from the swap chain
-    VkResult err;
-    err = vkctx.swapchain.acquireNextImage(semaphores.presentComplete,
-                                           &currentBuffer);
+    res = vkctx.swapchain.acquireNextImage(presentCompleteSemaphore,
+                                           &currentImage);
 
-    if (err == VK_ERROR_OUT_OF_DATE_KHR) {
-        // Swap chain is out of date (e.g. the window was resized).
-        // Re-create it.
-        //resize();
-        //draw(demo);
-        return;
-    } else if (err == VK_SUBOPTIMAL_KHR) {
-        // demo->swapchain is not as optimal as it could be, but the platform's
-        // presentation engine will still present the image correctly.
-    } else {
-        assert(!err);
-    }
+    if (!RECREATE_SWAPCHAIN_ON_SUBOPTIMAL && res == VK_SUBOPTIMAL_KHR)
+        res = VK_SUCCESS;
 
-    // Submit post present image barrier to transform the image back to a
-    // color attachment that our render pass can write to
-    VkSubmitInfo submitInfo = {};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.pNext = NULL;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &vkctx.postPresentCmdBuffers[currentBuffer];
-    VK_CHECK_RESULT(vkQueueSubmit(vkctx.queue, 1,
-                                  &submitInfo, VK_NULL_HANDLE));
+    if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR) {
+        if (res == VK_SUBOPTIMAL_KHR) {
+            // Implementations can signal the semaphore in this case. Since
+            // passing a signaled semaphore to acquireNextImage is invalid
+            // we cannot recycle it.
+            vkDestroySemaphore(vkctx.device, presentCompleteSemaphore, nullptr);
+        } else {
+		    vkctx.recycledSemaphores.push_back(presentCompleteSemaphore);
+        }
+        resizeWindow(w_width, w_height);
+        res = acquireNextImage();
+        if (res == VK_SUCCESS)
+            return res; // The recursive call sets the semaphore on the FB.
+	}
+	if (res != VK_SUCCESS) {
+		vkQueueWaitIdle(vkctx.queue);
+		return res;
+	}
+
+	// Recycle the image's old semaphore back into the semaphore manager.
+	VkSemaphore oldSemaphore = vkctx.perFb[currentImage].semaphores.presentComplete;
+
+	if (oldSemaphore != VK_NULL_HANDLE) {
+		vkctx.recycledSemaphores.push_back(oldSemaphore);
+	}
+
+	vkctx.perFb[currentImage].semaphores.presentComplete = presentCompleteSemaphore;
+
+	return res;
 }
 
 
@@ -372,28 +567,34 @@ VulkanAppSDL::submitFrame()
         // Set semaphores
         // Wait for render complete semaphore
         vkctx.drawCmdSubmitInfo.waitSemaphoreCount = 1;
-        vkctx.drawCmdSubmitInfo.pWaitSemaphores = &semaphores.renderComplete;
+        vkctx.drawCmdSubmitInfo.pWaitSemaphores
+                = &vkctx.perFb[currentImage].semaphores.renderComplete;
         // Signal ready with text overlay complete semaphore
+        if (vkctx.perFb[currentImage].semaphores.textOverlayComplete == VK_NULL_HANDLE) {
+            VkSemaphoreCreateInfo semaphore_info {
+                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+                .pNext = NULL,
+                .flags = 0
+            };
+            VK_CHECK_RESULT(vkCreateSemaphore(vkctx.device, &semaphore_info, nullptr,
+                            &vkctx.perFb[currentImage].semaphores.textOverlayComplete));
+        }
         vkctx.drawCmdSubmitInfo.signalSemaphoreCount = 1;
         vkctx.drawCmdSubmitInfo.pSignalSemaphores
-                                            = &semaphores.textOverlayComplete;
+                                  = &vkctx.perFb[currentImage].semaphores.textOverlayComplete;
 
         // Submit current text overlay command buffer
         vkctx.drawCmdSubmitInfo.commandBufferCount = 1;
         vkctx.drawCmdSubmitInfo.pCommandBuffers
-                                     = &textOverlay->cmdBuffers[currentBuffer];
+                                     = &textOverlay->cmdBuffers[currentImage];
         VK_CHECK_RESULT(vkQueueSubmit(vkctx.queue, 1, &vkctx.drawCmdSubmitInfo,
                                       VK_NULL_HANDLE));
 
         // Reset stage mask
         vkctx.drawCmdSubmitInfo.pWaitDstStageMask = &vkctx.submitPipelineStages;
-        // Reset wait and signal semaphores for rendering next frame
-        // Wait for swap chain presentation to finish
-        vkctx.drawCmdSubmitInfo.waitSemaphoreCount = 1;
-        vkctx.drawCmdSubmitInfo.pWaitSemaphores = &semaphores.presentComplete;
-        // Signal ready with offscreen semaphore
-        vkctx.drawCmdSubmitInfo.signalSemaphoreCount = 1;
-        vkctx.drawCmdSubmitInfo.pSignalSemaphores = &semaphores.renderComplete;
+        // Reset wait semaphores for rendering next frame
+        vkctx.drawCmdSubmitInfo.waitSemaphoreCount = 0;
+        vkctx.drawCmdSubmitInfo.pWaitSemaphores = nullptr;
     }
     // Submit pre-present image barrier to transform the image from color
     // attachment to present(khr) for presenting to the swap chain.
@@ -401,30 +602,34 @@ VulkanAppSDL::submitFrame()
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.pNext = NULL;
     submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &vkctx.prePresentCmdBuffers[currentBuffer];
+    submitInfo.pCommandBuffers = &vkctx.prePresentCmdBuffers[currentImage];
     VK_CHECK_RESULT(vkQueueSubmit(vkctx.queue, 1, &submitInfo, VK_NULL_HANDLE));
 
-    VkResult err =
-            vkctx.swapchain.queuePresent(vkctx.queue, currentBuffer,
-               submitTextOverlay ?
-                   semaphores.textOverlayComplete : semaphores.renderComplete);
+    VkResult res =
+            vkctx.swapchain.queuePresent(vkctx.queue, currentImage,
+               submitTextOverlay
+                   ? vkctx.perFb[currentImage].semaphores.textOverlayComplete
+                   : vkctx.perFb[currentImage].semaphores.renderComplete);
 
-    if (err == VK_ERROR_OUT_OF_DATE_KHR) {
-        // swapchain is out of date (e.g. the window was resized) and
-        // must be recreated:
-        //resize();
-    } else if (err == VK_SUBOPTIMAL_KHR) {
-        if (!subOptimalPresentWarned) {
+	// Handle error in present.
+    if (!RECREATE_SWAPCHAIN_ON_SUBOPTIMAL && res == VK_SUBOPTIMAL_KHR) {
+        res = VK_SUCCESS;
+    }
+
+	if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR) {
+        resizeWindow(w_width, w_height);
+    } else if (res != VK_SUCCESS) {
+        if (!presentSwapchainErrorWarned) {
+            std::stringstream msg;
+            msg << "Failed to present swapchain image: VK_RESULT = " << res;
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, szName,
-                                     "Suboptimal present of framebuffer.",
-                                     NULL);
+                                     msg.str().c_str(), NULL);
+            presentSwapchainErrorWarned = true;
         }
-    } else
-        assert(!err);
-
+    }
     // This is necessary because the text overlay's command buffer changes
-    // every frame and, although the other command buffers are the same
-    // every frame, they aren't marked for simultaneous use.
+    // every frame and the other command buffers aren't marked for
+    // simultaneous use. although they are the same every frame.
     VK_CHECK_RESULT(vkQueueWaitIdle(vkctx.queue));
 }
 
@@ -432,7 +637,6 @@ VulkanAppSDL::submitFrame()
 //----------------------------------------------------------------------
 //  Vulkan Initialization
 //----------------------------------------------------------------------
-
 
 bool
 VulkanAppSDL::initializeVulkan()
@@ -548,13 +752,13 @@ VulkanAppSDL::createInstance()
             extensionNames.push_back(
                 VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME
             );
+            vkctx.enabledInstanceExtensions.physicalDeviceProps2 = true;
         }
-        if (hdr) {
-            if (!strncmp(extension.extensionName,
-                            VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME,
-                            VK_MAX_EXTENSION_NAME_SIZE)) {
-                extensionNames.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
-            }
+        if (!strncmp(extension.extensionName,
+                        VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME,
+                        VK_MAX_EXTENSION_NAME_SIZE)) {
+            extensionNames.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
+            vkctx.enabledInstanceExtensions.swapchainColorSpace = true;
         }
 
 #if VK_KHR_portability_subset
@@ -564,6 +768,7 @@ VulkanAppSDL::createInstance()
             extensionNames.push_back(
                 VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
             );
+            vkctx.enabledInstanceExtensions.portabilityEnumeration = true;
         }
 #endif
     }
@@ -607,7 +812,6 @@ VulkanAppSDL::createInstance()
         instanceInfo.pNext = &dbgCreateInfo;
     }
 
-    //err = vkCreateInstance(&instanceInfo, NULL, &vkctx.instance);
     vk::Result cerr;
     cerr = vk::createInstance(&instanceInfo, nullptr, &vkctx.instance);
 
@@ -649,10 +853,29 @@ VulkanAppSDL::createInstance()
                 if (k == instanceExtensionCount) {
                     // Not found
                     msg << "    " << extensionNames[j] << "\n";
+                    if (!strncmp(extensionNames[j],
+                                 VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+                                 VK_MAX_EXTENSION_NAME_SIZE)) {
+                        vkctx.enabledInstanceExtensions.physicalDeviceProps2 = false;
+                    }
+                    if (!strncmp(extensionNames[j],
+                                 VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME,
+                                 VK_MAX_EXTENSION_NAME_SIZE)) {
+                        vkctx.enabledInstanceExtensions.swapchainColorSpace = false;
+                    }
+#if VK_KHR_portability_subset
+                    if (!strncmp(extensionNames[j],
+                                 VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME,
+                                 VK_MAX_EXTENSION_NAME_SIZE)) {
+                        vkctx.enabledInstanceExtensions.portabilityEnumeration = false;
+                    }
+#endif
                 }
             }
-            msg << "\nMake sure your layers path is set appropriately.";
             delete [] instanceExtensions;
+       } else if (cerr == vk::Result::eErrorLayerNotPresent) {
+           msg << "Cannot find validation layers."
+               << " Make sure your layers path is set appropriately.";
        } else {
             msg << "vkCreateInstance: unexpected failure, code = "
                 << cerr << ".\n\nDo you have a compatible Vulkan "
@@ -662,7 +885,6 @@ VulkanAppSDL::createInstance()
                                       msg.str().c_str(), NULL);
        return false;
     }
-
     return true;
 } // createInstance
 
@@ -678,20 +900,42 @@ VulkanAppSDL::findGpu()
                                                   (vk::PhysicalDevice*)nullptr);
     assert(err == vk::Result::eSuccess);
 
-    if (gpuCount > 0) {
-        std::vector<vk::PhysicalDevice> gpus;
-        gpus.resize(gpuCount);
-        err = vkctx.instance.enumeratePhysicalDevices(&gpuCount, gpus.data());
-        assert(err == vk::Result::eSuccess);
-        // For now just grab the first physical device */
-        vkctx.setGpu(gpus[0]);
-        // Store features and properties so apps can query them.
-    } else {
-        std::string msg;
+    if (gpuCount == 0) {
         ERROR_RETURN(
             "vkEnumeratePhysicalDevices reported zero accessible devices.\n\n"
             "Do you have a compatible Vulkan installable client driver (ICD) "
             "installed?");
+    }
+
+    std::vector<vk::PhysicalDevice> gpus;
+    gpus.resize(gpuCount);
+    err = vkctx.instance.enumeratePhysicalDevices(&gpuCount, gpus.data());
+    assert(err == vk::Result::eSuccess);
+#if (SDL_PLATFORM_APPLE)
+    if (gpuCount > 1) {
+        // KosmicKrisp only advertises a VkPhysicalDevice when running on an OS
+        // it supports, if this block has been entered, KosmicKrisp is supported.
+        vk::PhysicalDevice chosenGpu = nullptr;
+        for (vk::PhysicalDevice gpu : gpus) {
+            gpu.getProperties2(&vkctx.gpuPropertiesChain.get<vk::PhysicalDeviceProperties2>());
+            if (vkctx.gpuDriverProperties.driverID == requestedDriver) {
+                chosenGpu = gpu;
+                break;
+            }
+        }
+        if (!chosenGpu) {
+            std::string msg = "VulkanAppSDL::findGpu: Requested driver ";
+            msg += vk::to_string(requestedDriver);
+            msg += " not found in Vulkan Instance";
+            ERROR_RETURN(msg.c_str());
+        }
+        vkctx.setGpu(chosenGpu);
+    } else
+#endif
+    {
+        // For non-macos with multiple gpu's, for now grab the first available.
+        vkctx.setGpu(gpus[0]);
+        vkctx.gpu.getProperties2(&vkctx.gpuPropertiesChain.get<vk::PhysicalDeviceProperties2>());
     }
 
     return true;
@@ -739,36 +983,53 @@ VulkanAppSDL::setupDebugReporting()
 bool
 VulkanAppSDL::createSurface()
 {
-    if (hdr) try {
-        if (colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) //colorSpace not set?
-            vkctx.swapchain.initSurface(pswMainWindow,
-                                VK_FORMAT_R16G16B16A16_SFLOAT,
-                                VulkanSwapchain::colorSpaceSelector::eAnyLinear);
-        else
-            vkctx.swapchain.initSurface(pswMainWindow,
-                                VK_FORMAT_R16G16B16A16_SFLOAT,
-                                VulkanSwapchain::colorSpaceSelector::eSpecific,
-                                colorSpace);
-    } catch(unsupported_surface_format&) {
-        std::string msg = "VulkanSwapchain::initSurface: ";
-        msg += "No matching HDR surface format found. Reverting to SDR.";
-        (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, theApp->name(),
-                                       msg.c_str(), NULL);
-        hdr = false;
+    try {
+        vkctx.swapchain.createSurface(pswMainWindow);
+        vkctx.swapchain.findGraphicsPresentQueue();
     } catch(std::runtime_error& e) {
         (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, theApp->name(),
                                        e.what(), NULL);
         return false;
     }
-    if (!hdr) try {
-        vkctx.swapchain.initSurface(pswMainWindow,
-                            VK_FORMAT_B8G8R8A8_SRGB,
-                            VulkanSwapchain::colorSpaceSelector::eSpecific,
-                            VK_COLOR_SPACE_SRGB_NONLINEAR_KHR);
-    } catch(std::runtime_error& e) {
-        (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, theApp->name(),
-                                       e.what(), NULL);
-        return false;
+
+    if (!vkctx.enabledInstanceExtensions.swapchainColorSpace) {
+        if (colorSpace.cs != defaultLdrColorSpace.cs) {
+            std::string msg = "VulkanSwapchain::initSurface: ";
+            msg += "Implementation does not support ";
+            msg += VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME;
+            msg += " which is needed for " + vk::to_string(colorSpace.cs);
+            msg += " Reverting to " + vk::to_string(defaultLdrColorSpace.cs) + ".";
+            (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, theApp->name(),
+                                           msg.c_str(), NULL);
+            hdr = false;
+            colorSpace = defaultLdrColorSpace;
+        }
+    }
+
+    for (;;) {
+        try {
+            vkctx.swapchain.initSurface(
+                        hdr ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_B8G8R8A8_SRGB,
+                        colorSpace,
+                        false);
+            break;
+        } catch(unsupported_surface_format& e) {
+            std::string msg = e.what();
+            if (hdr) {
+                msg += " Reverting to LDR.";
+                hdr = false;
+            } else if (colorSpace.cs != defaultLdrColorSpace.cs) {
+                msg += " Reverting to " + vk::to_string(defaultLdrColorSpace.cs);
+            }
+            (void)SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, theApp->name(),
+                                           msg.c_str(), NULL);
+            if (colorSpace.cs != defaultLdrColorSpace.cs) {
+                colorSpace = defaultLdrColorSpace;
+            } else {
+                vkctx.swapchain.destroySurface();
+                return false;
+            }
+        }
     }
     return true;
 } // createSurface
@@ -914,9 +1175,13 @@ VulkanAppSDL::createDevice()
             (const char *const *)extensionsToEnable.data(),
             nullptr);
 
-    // Want to enable all available features in the queried device features so use the
-    // structure chain where getFeatures2 saved them.
+    // Want to enable all available features in the queried device features so
+    // use the structure chain where getFeatures2 saved them.
+#if VK_HEADER_VERSION < 304 // Rough estimate. Don't know which version fixed vulkan.hpp.
+    deviceInfo.pNext = (const void*)&vkctx.gpuFeaturesChain.get<vk::PhysicalDeviceFeatures2>();
+#else
     deviceInfo.pNext = vkctx.gpuFeaturesChain.get<vk::PhysicalDeviceFeatures2>();
+#endif
 
     err = vkctx.gpu.createDevice(&deviceInfo, NULL, &vkctx.device);
     if (err != vk::Result::eSuccess) {
@@ -951,44 +1216,7 @@ VulkanAppSDL::createDevice()
 bool
 VulkanAppSDL::createSemaphores()
 {
-    VkSemaphoreCreateInfo semaphoreCreateInfo = {};
-    semaphoreCreateInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    semaphoreCreateInfo.pNext = NULL;
-    semaphoreCreateInfo.flags = 0;
-
-    // Semaphore used to synchronize image presentation.
-    // Ensures that the image is displayed before we start submitting new
-    // commands to the queue.
-    VK_CHECK_RESULT(vkCreateSemaphore(vkctx.device,
-                                      &semaphoreCreateInfo,
-                                      nullptr,
-                                      &semaphores.presentComplete));
-    // Semaphore used to synchronize render command submission.
-    // Ensures that the image is not presented until all render commands have
-    // been submitted and executed.
-    VK_CHECK_RESULT(vkCreateSemaphore(vkctx.device,
-                                      &semaphoreCreateInfo,
-                                      nullptr,
-                                      &semaphores.renderComplete));
-    // Semaphore used to synchronize text overlay command submission.
-    // Ensures that the image is not presented until all commands for the
-    // text overlay have been submitted and executed. Will be inserted after
-    // the render complete semaphore if the text overlay is enabled.
-    VK_CHECK_RESULT(vkCreateSemaphore(vkctx.device,
-                                      &semaphoreCreateInfo,
-                                      nullptr,
-                                      &semaphores.textOverlayComplete));
-
-    // Set up submit info structure
-    // Semaphores will stay the same during application lifetime
-    // Command buffer submission info is set by each example
-    vkctx.drawCmdSubmitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    vkctx.drawCmdSubmitInfo.pNext = NULL;
-    vkctx.drawCmdSubmitInfo.pWaitDstStageMask = &vkctx.submitPipelineStages;
-    vkctx.drawCmdSubmitInfo.waitSemaphoreCount = 1;
-    vkctx.drawCmdSubmitInfo.pWaitSemaphores = &semaphores.presentComplete;
-    vkctx.drawCmdSubmitInfo.signalSemaphoreCount = 1;
-    vkctx.drawCmdSubmitInfo.pSignalSemaphores = &semaphores.renderComplete;
+    vkctx.createSemaphores();
     return true;
 }
 
@@ -996,13 +1224,12 @@ VulkanAppSDL::createSemaphores()
 bool
 VulkanAppSDL::createSwapchain()
 {
-    vkctx.swapchain.create(&w_width, &w_height, enableVSync);
+    vkctx.createSwapchain(w_width, w_height, enableVSync);
 #if SDL_PLATFORM_APPLE && !SDL_PLATFORM_MACOS
     extern void setWantsExtendedDynamicRangeContent(SDL_Window* window, bool enable);
     if (hdr)
         setWantsExtendedDynamicRangeContent(pswMainWindow, hdr);
 #endif
-
     return true;
 } // createSwapchain
 
@@ -1275,30 +1502,7 @@ VulkanAppSDL::prepareDescriptorSet()
 bool
 VulkanAppSDL::prepareFramebuffers()
 {
-    VkImageView attachments[2];
-    attachments[1] = vkctx.depthBuffer.view;
-
-    const VkFramebufferCreateInfo fb_info = {
-        VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-        NULL,
-        0,
-        vkctx.renderPass,
-        2,
-        attachments,
-        w_width,
-        w_height,
-        1,
-    };
-    U_ASSERT_ONLY VkResult err;
-    uint32_t i;
-
-    vkctx.framebuffers.resize(vkctx.swapchain.imageCount);
-    for (i = 0; i < vkctx.framebuffers.size(); i++) {
-        attachments[0] = vkctx.swapchain.buffers[i].view;
-        err = vkCreateFramebuffer(vkctx.device, &fb_info, NULL,
-                                  &vkctx.framebuffers[i]);
-        assert(!err);
-    }
+    vkctx.createFramebuffers(w_width, w_height);
     return true;
 }
 
@@ -1378,6 +1582,20 @@ VulkanAppSDL::prepareTextOverlay()
         shaderStages.push_back(shaderStage);
         shaderModules.push_back(shaderStage.module);
 
+        VkRect2D safeRenderArea;  // Avoids any status area such as that on iPad.
+        safeRenderArea.offset.x = safeRenderArea.offset.y = 0;
+        safeRenderArea.extent.width = w_width;
+        safeRenderArea.extent.height = w_height;
+        SDL_Rect safeWindowArea;
+        float displayScale = SDL_GetWindowDisplayScale(pswMainWindow);
+        if (displayScale == 0.0f) displayScale = 1.0f;
+        if (SDL_GetWindowSafeArea(pswMainWindow, &safeWindowArea)) {
+            safeRenderArea.extent.width = safeWindowArea.w * displayScale;
+            safeRenderArea.extent.height = safeWindowArea.h * displayScale;
+            safeRenderArea.offset.x = safeWindowArea.x * displayScale;
+            safeRenderArea.offset.y = safeWindowArea.y * displayScale;
+        }
+
         textOverlay = new VulkanTextOverlay(
             vkctx.gpu,
             vkctx.device,
@@ -1385,8 +1603,7 @@ VulkanAppSDL::prepareTextOverlay()
             vkctx.framebuffers,
             vkctx.swapchain.colorFormat,
             vkctx.depthBuffer.format,
-            &w_width,
-            &w_height,
+            safeRenderArea,
             shaderStages
             );
         updateTextOverlay();
@@ -1399,29 +1616,42 @@ void VulkanAppSDL::updateTextOverlay()
     if (!enableTextOverlay)
         return;
 
+    float x = 10.0f, y = 5.0f;
+
+#if 0
+    SDL_Rect safeRenderArea;
+    float displayScale = SDL_GetWindowDisplayScale(pswMainWindow);
+    if (displayScale == 0.0f) displayScale = 1.0f;
+    if (SDL_GetWindowsafeRenderArea(pswMainWindow, &safeRenderArea)) {
+        x += (float)safeRenderArea.x * displayScale;
+        y += (float)safeRenderArea.y * displayScale;
+    }
+#endif
+
     textOverlay->beginTextUpdate();
 
-    textOverlay->addText(appTitle, 5.0f, 5.0f, VulkanTextOverlay::alignLeft);
+    textOverlay->addText(appTitle, x, y, VulkanTextOverlay::alignLeft);
 
     std::stringstream ss;
     ss << std::fixed << std::setprecision(2)
        << lastFrameTime << "ms (" << fpsCounter.lastFPS << " fps)";
-    textOverlay->addText(ss.str(), 5.0f, 25.0f, VulkanTextOverlay::alignLeft);
+    textOverlay->addText(ss.str(), x, y += 20.0f, VulkanTextOverlay::alignLeft);
 
-    // Cast is a workaround for a change in Vulkan SDK 1.2.141 to the
-    // declaration of deviceName in PhysicalDeviceProperties from a char
-    // array to use an Array1D template.
-    textOverlay->addText((char*)vkctx.gpuProperties.deviceName, 5.0f, 45.0f,
+    ss.str("");
+    ss << vkctx.gpuProperties.deviceName << " with "
+       << vkctx.gpuDriverProperties.driverName << " version "
+       << vkctx.gpuDriverProperties.driverInfo;
+    textOverlay->addText(ss.str(), x, y+=20.0f,
                          VulkanTextOverlay::alignLeft);
 
     // Leave a blank line between us and the derived class's text.
-    getOverlayText(85.0f);
+    getOverlayText(x, y+= 40.0f);
 
     textOverlay->endTextUpdate();
 }
 
 
-void VulkanAppSDL::getOverlayText(float /*yOffset*/)
+void VulkanAppSDL::getOverlayText(float /*xOffset*/, float /*yOffset*/)
 {
     // Can be overriden in derived class
 }
@@ -1540,6 +1770,9 @@ VulkanAppSDL::setImageLayout(VkImage image, VkImageAspectFlags aspectMask,
     imageMemoryBarrier.subresourceRange.baseArrayLayer = 0;
     imageMemoryBarrier.subresourceRange.layerCount = 1;
 
+    VkPipelineStageFlags src_stages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    VkPipelineStageFlags dest_stages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+
     if (new_image_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
         /* Make sure anything that was copying from this image has completed */
         imageMemoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
@@ -1559,10 +1792,8 @@ VulkanAppSDL::setImageLayout(VkImage image, VkImageAspectFlags aspectMask,
         /* Make sure any Copy or CPU writes to image are flushed */
         imageMemoryBarrier.dstAccessMask =
             VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
+        dest_stages = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
     }
-
-    VkPipelineStageFlags src_stages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-    VkPipelineStageFlags dest_stages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 
     vkCmdPipelineBarrier(setupCmdBuffer, src_stages, dest_stages, 0, 0,
                          NULL, 0, NULL, 1, &imageMemoryBarrier);

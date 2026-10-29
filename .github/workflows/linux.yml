@@ -62,7 +62,7 @@ jobs:
           generator: Ninja
           arch: x86_64
           compiler: gcc
-          vk_sdk_ver: '1.4.313'
+          vk_sdk_ver: '1.4.363'
           options: {
             config: Debug,
             doc: OFF, jni: ON, loadtests: OpenGL+Vulkan, py: ON, tools: ON, tools_cts: ON,
@@ -80,7 +80,7 @@ jobs:
           generator: Ninja
           arch: x86_64
           compiler: gcc
-          vk_sdk_ver: '1.4.313'
+          vk_sdk_ver: '1.4.363'
           options: {
             config: Debug,
             doc: OFF, jni: OFF, loadtests: OFF, py: OFF, tools: ON, tools_cts: ON,
@@ -91,7 +91,7 @@ jobs:
           generator: Ninja Multi-Config
           arch: x86_64
           compiler: clang
-          vk_sdk_ver: '1.4.313'
+          vk_sdk_ver: '1.4.363'
           options: {
             config: 'Debug,Release',
             doc: OFF, jni: ON, loadtests: OpenGL+Vulkan, py: ON, tools: ON, tools_cts: OFF,
@@ -106,6 +106,7 @@ jobs:
           generator: Ninja
           arch: x86_64
           compiler: gcc
+          vk_sdk_ver: '1.4.363'
           options: {
             config: Release,
             doc: ON, jni: ON, loadtests: OFF, py: ON, tools: ON, tools_cts: ON,
@@ -117,6 +118,7 @@ jobs:
           generator: Ninja
           arch: aarch64
           compiler: gcc
+          vk_sdk_ver: '1.4.363'
           options: {
             config: Release,
             doc: ON, jni: ON, loadtests: OFF, py: ON, tools: ON, tools_cts: ON,
@@ -126,33 +128,33 @@ jobs:
         # "generic" so POCL (the only OpenCL CPU driver) can't figure out
         # which code to use. Disable tests, just check building.
         - name: OpenCL,SSE
-          os: ubuntu-22.04
+          os: ubuntu-24.04
           generator: Ninja
           arch: x86_64
           compiler: gcc
-          vk_sdk_ver: '1.4.313'
+          vk_sdk_ver: '1.4.363'
           options: {
             config: Release,
             doc: OFF, jni: OFF, loadtests: OFF, py: OFF, tests: OFF, tools: OFF,
             tools_cts: OFF, sse: ON, opencl: ON
           }
         - name: OpenCL
-          os: ubuntu-22.04
+          os: ubuntu-24.04
           generator: Ninja
           arch: x86_64
           compiler: gcc
-          vk_sdk_ver: '1.4.313'
+          vk_sdk_ver: '1.4.363'
           options: {
             config: Release,
             doc: OFF, jni: OFF, loadtests: OFF, py: OFF, tests: OFF, tools: OFF,
             tools_cts: OFF, sse: OFF, opencl: ON
           }
         - name: All OFF
-          os: ubuntu-22.04
+          os: ubuntu-24.04
           generator: Ninja
           arch: x86_64
           compiler: gcc
-          vk_sdk_ver: '1.4.313'
+          vk_sdk_ver: '1.4.363'
           options: {
             config: Release,
             doc: OFF, jni: OFF, loadtests: OFF, py: OFF, tools: OFF, tools_cts: OFF,

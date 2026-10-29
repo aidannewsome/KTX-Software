@@ -27,7 +27,7 @@ endif()
 if(APPLE)
     if(CMAKE_SYSTEM_NAME STREQUAL "iOS" OR CMAKE_SYSTEM_NAME STREQUAL "tvOS" OR CMAKE_SYSTEM_NAME STREQUAL "visionOS")
         set( APPLE_LOCKED_OS ON )
-    else()
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR NOT CMAKE_SYSTEM_NAME)
         set( APPLE_MAC_OS ON )
     endif()
 endif()
@@ -114,7 +114,7 @@ if(APPLE)
         # The unit tests now use std::filesystem.
         set(CMAKE_OSX_DEPLOYMENT_TARGET "13.3" CACHE STRING "macOS Deployment Target")
     elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS" OR CMAKE_SYSTEM_NAME STREQUAL "tvOS")
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "iOS/tvOS Deployment Target")
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "iOS/tvOS Deployment Target")
         set(CMAKE_XCODE_ATTRIBUTE_ONLY_ACTIVE_ARCH NO)
     elseif(CMAKE_SYSTEM_NAME STREQUAL "visionOS")
         set(CMAKE_OSX_DEPLOYMENT_TARGET "1.0" CACHE STRING "visionOS Deployment Target")
@@ -131,7 +131,7 @@ include(GNUInstallDirs) # Must be after project.
 include(CTest)          #           "
 
 set_target_processor_type(CPU_ARCHITECTURE) # Must be after project.
-if (CPU_ARCHITECTURE STREQUAL x86)
+if (CPU_ARCHITECTURE STREQUAL x86 AND NOT ANDROID)
     message(FATAL_ERROR "This project cannot be built for x86 cpu.")
 endif()
 
