@@ -258,7 +258,7 @@ jobs:
         # need the X11, Wayland and ibus headers.
         run: |
           dnf install -y --enablerepo=powertools zip unzip \
-            autoconf autoconf-archive automake libtool pkgconf-pkg-config \
+            autoconf autoconf-archive automake libtool perl-open pkgconf-pkg-config \
             mesa-libGL-devel mesa-libEGL-devel \
             libX11-devel libXext-devel libXft-devel libXcursor-devel \
             libXfixes-devel libXi-devel libXrandr-devel libXtst-devel \
