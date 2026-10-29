@@ -62,7 +62,7 @@ jobs:
           generator: Ninja
           arch: x86_64
           compiler: gcc
-          vk_sdk_ver: '1.4.363'
+          vk_sdk_ver: '1.4.363.0'
           options: {
             config: Debug,
             doc: OFF, jni: ON, loadtests: OpenGL+Vulkan, py: ON, tools: ON, tools_cts: ON,
@@ -80,7 +80,7 @@ jobs:
           generator: Ninja
           arch: x86_64
           compiler: gcc
-          vk_sdk_ver: '1.4.363'
+          vk_sdk_ver: '1.4.363.0'
           options: {
             config: Debug,
             doc: OFF, jni: OFF, loadtests: OFF, py: OFF, tools: ON, tools_cts: ON,
@@ -91,7 +91,7 @@ jobs:
           generator: Ninja Multi-Config
           arch: x86_64
           compiler: clang
-          vk_sdk_ver: '1.4.363'
+          vk_sdk_ver: '1.4.363.0'
           options: {
             config: 'Debug,Release',
             doc: OFF, jni: ON, loadtests: OpenGL+Vulkan, py: ON, tools: ON, tools_cts: OFF,
@@ -106,7 +106,7 @@ jobs:
           generator: Ninja
           arch: x86_64
           compiler: gcc
-          vk_sdk_ver: '1.4.363'
+          vk_sdk_ver: '1.4.363.0'
           options: {
             config: Release,
             doc: ON, jni: ON, loadtests: OpenGL, py: ON, tools: ON, tools_cts: ON,
@@ -118,7 +118,7 @@ jobs:
           generator: Ninja
           arch: aarch64
           compiler: gcc
-          vk_sdk_ver: '1.4.363'
+          vk_sdk_ver: '1.4.363.0'
           options: {
             config: Release,
             doc: ON, jni: ON, loadtests: OpenGL, py: ON, tools: ON, tools_cts: ON,
@@ -132,7 +132,7 @@ jobs:
           generator: Ninja
           arch: x86_64
           compiler: gcc
-          vk_sdk_ver: '1.4.363'
+          vk_sdk_ver: '1.4.363.0'
           options: {
             config: Release,
             doc: OFF, jni: OFF, loadtests: OFF, py: OFF, tests: OFF, tools: OFF,
@@ -143,7 +143,7 @@ jobs:
           generator: Ninja
           arch: x86_64
           compiler: gcc
-          vk_sdk_ver: '1.4.363'
+          vk_sdk_ver: '1.4.363.0'
           options: {
             config: Release,
             doc: OFF, jni: OFF, loadtests: OFF, py: OFF, tests: OFF, tools: OFF,
@@ -154,7 +154,7 @@ jobs:
           generator: Ninja
           arch: x86_64
           compiler: gcc
-          vk_sdk_ver: '1.4.363'
+          vk_sdk_ver: '1.4.363.0'
           options: {
             config: Release,
             doc: OFF, jni: OFF, loadtests: OFF, py: OFF, tools: OFF, tools_cts: OFF,
