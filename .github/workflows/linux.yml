@@ -259,8 +259,9 @@ jobs:
           dnf install -y --enablerepo=powertools zip unzip \
             autoconf autoconf-archive automake libtool pkgconf-pkg-config \
             mesa-libGL-devel mesa-libEGL-devel \
-            libX11-devel libXext-devel libXft-devel \
-            wayland-devel libxkbcommon-devel ibus-devel
+            libX11-devel libXext-devel libXft-devel libXcursor-devel \
+            libXfixes-devel libXi-devel libXrandr-devel libXtst-devel \
+            wayland-devel wayland-protocols-devel libxkbcommon-devel ibus-devel
 
       - name: Set up vcpkg (manylinux)
         if: matrix.container && matrix.options.loadtests != 'OFF'
