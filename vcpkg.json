@@ -8,9 +8,17 @@
         "assimp",
         {
           "name": "sdl3",
-          "default-features": true,
+          "default-features": false,
           "features": [
-            "vulkan"
+            "vulkan",
+            {
+              "name": "wayland",
+              "platform": "linux"
+            },
+            {
+              "name": "x11",
+              "platform": "linux"
+            }
           ]
         }
       ]
