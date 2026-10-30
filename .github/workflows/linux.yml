@@ -252,9 +252,11 @@ jobs:
       - name: Install load test dependencies (manylinux)
         if: matrix.container && matrix.options.loadtests != 'OFF'
         # vcpkg builds SDL3 and assimp from source. SDL3's default features
-        # need the X11, Wayland and ibus headers. libxcrypt, which comes with
-        # dbus's systemd feature, needs autoconf-archive and perl-open.
+        # need the X11, Wayland and ibus headers. dbus's systemd feature brings
+        # in libxcrypt, which needs autoconf-archive and perl-open, and
+        # libsystemd, which needs jinja2.
         run: |
+          pip install jinja2
           dnf install -y --enablerepo=powertools zip unzip \
             autoconf autoconf-archive automake libtool perl-open pkgconf-pkg-config \
             mesa-libGL-devel mesa-libEGL-devel \
