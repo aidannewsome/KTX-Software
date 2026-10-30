@@ -419,6 +419,36 @@ jobs:
         run: |
           ./scripts/build_linux.sh
 
+      # Fork test only. Runs gl3loadtests under a virtual display with a session bus.
+      - name: Smoke test gl3loadtests (fork test)
+        if: matrix.name == 'Package (x86_64)'
+        run: |
+          dnf install -y xorg-x11-server-Xvfb mesa-dri-drivers xorg-x11-apps ImageMagick dbus-daemon
+          ldd build/Release/gl3loadtests | tee smoke-ldd.txt
+          Xvfb :99 -screen 0 1280x720x24 &
+          sleep 2
+          export DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 SDL_VIDEODRIVER=x11 SDL_LOGGING='*=debug'
+          set +e
+          dbus-run-session -- timeout 30 build/Release/gl3loadtests > smoke-out.txt 2>&1 &
+          app=$!
+          sleep 20
+          xwd -root -silent -display :99 | convert xwd:- smoke.png
+          wait $app
+          rc=$?
+          cat smoke-out.txt
+          echo "exit code $rc"
+          [ "$rc" = 124 ]
+
+      - name: Upload smoke test (fork test)
+        if: always() && matrix.name == 'Package (x86_64)'
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-${{ github.head_ref }}
+          path: |
+            smoke.png
+            smoke-out.txt
+            smoke-ldd.txt
+
       - name: Sanitize release notes
         if: matrix.options.package == 'YES' && github.event_name == 'push' && github.ref_type == 'tag'
         run: |
